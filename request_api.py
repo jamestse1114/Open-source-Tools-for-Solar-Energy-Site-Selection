@@ -11,23 +11,33 @@ class DataRetriever:
     def get_data(self, endpoint, params=None):
         response = requests.get(self.api_url + endpoint, params=params)
         
+        # Print out the status code and response text
+        print('Status code:', response.status_code)
+        print('Response text:', response.text)
+        
         # Check if the request was successful
         if response.status_code == 200:
             # Parse the response as JSON
             data = json.loads(response.text)
             return data
+        
         else:
             print(f'Request failed with status code {response.status_code}')
             return None
+
 
 # Initialize the DataRetriever with the URL of the public API
 data_retriever = DataRetriever('https://globalsolaratlas.info/api')
 
 @app.route('/api/data', methods=['GET'])
-def get_data():
+def get_data_from_api():
     # Get the endpoint and parameters from the request
     endpoint = request.args.get('endpoint')
     params = request.args.get('params')
+
+    # Check if endpoint was provided
+    if endpoint is None:
+        return jsonify({'error': 'No endpoint provided'}), 400
 
     # If params is a string of JSON, parse it into a dictionary
     if params is not None and isinstance(params, str):

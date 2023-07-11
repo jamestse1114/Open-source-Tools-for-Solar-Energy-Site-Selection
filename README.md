@@ -1,4 +1,4 @@
-# Open-source-tools-for-Solar-Energy-Site-Selection
+# Open-source-Tools-for-Solar-Energy-Site-Selection
 
 ## Solution through Python-Based Open-Source Tool
 This research project aims to develop a Python-based open-source tool that simplifies and democratizes the complex process of solar site selection. By leveraging Python's powerful libraries and user-friendly syntax, the tool will enable users with varying degrees of technical expertise, including those with minimal background, to make informed decisions about solar site selection.

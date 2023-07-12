@@ -14,6 +14,9 @@ This tool will leverage the power and flexibility of Python to provide a highly 
 
 The proposed Python tool offers a promising solution to the current limitations and research gaps, by combining the advantages of open-source software with the ability to integrate various site selection methods. Through this approach, it aims to deliver a robust, flexible, and user-friendly tool for solar energy site selection.
 
+## Structure
+![Screenshot 2023-07-12 102142](https://github.com/jamestse1114/Open-source-Tools-for-Solar-Energy-Site-Selection/assets/114963128/b051d6f2-00a4-416c-9740-2e00ca1a7ac3)
+
 ## Features
 
 - **Ease of Use**: It has been designed with a focus on usability. Through Python's readability and simplicity, combined with a user-friendly interface and clear, comprehensive documentation, even users with limited technical expertise can conduct and interpret complex geospatial analyses.

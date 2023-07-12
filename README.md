@@ -32,4 +32,4 @@ For more detailed instructions on how to use It, refer to our [User Guide](#). I
 
 ## References
 
-Millington, J. D., & Jupp, D. L. B. (2017). Python for biologists: a complete programming course for beginners. CreateSpace Independent Publishing Platform.
+Millington, J. and Jupp, D., 2017. Python in practice: Create better programs using concurrency, libraries, and patterns. Boston: Addison-Wesley Professional.

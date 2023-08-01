@@ -249,13 +249,32 @@ class GisMcda:
             print("\n")
 
     def plot_rasters(self):
-        for raster_file, (out_image, out_meta) in self.rasters.items():
-            fig, ax = plt.subplots()
-            im = show(out_image[0], ax=ax, cmap='viridis', vmin=0, vmax=5)  # Store the returned object in im
-            ax.set_title(raster_file)
-            plt.colorbar(im.get_images()[0], ax=ax)  # Use im here
-            plt.show()
-    
+        # Calculate the number of rows and columns for the subplot grid
+        n = len(self.rasters)
+        cols = 2  # You can adjust this depending on how you want to arrange your subplots
+        rows = n // cols
+        rows += n % cols
+
+        # Create a figure and a grid of subplots
+        fig, axs = plt.subplots(rows, cols, figsize=(20, 20))
+
+        # Flatten the array of axes, so we can easily iterate over it
+        axs = axs.ravel()
+
+        # Loop through each raster and each axis
+        for i, (raster_file, (out_image, out_meta)) in enumerate(self.rasters.items()):
+            # Display the raster
+            im = axs[i].imshow(out_image[0], cmap='viridis', vmin=0, vmax=5)
+            axs[i].set_title(raster_file)
+            fig.colorbar(im, ax=axs[i])
+
+        # If there are any remaining subplots, remove them
+        for j in range(i+1, rows*cols):
+            fig.delaxes(axs[j])
+
+        plt.tight_layout()
+        plt.show()
+
     # Methods for different MCDA techniques here
     def ahp(self):
         # Implement AHP method here

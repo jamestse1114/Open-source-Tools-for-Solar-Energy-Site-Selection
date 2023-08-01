@@ -2,25 +2,25 @@ import os
 import ast
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import geopandas as gpd
-import contextily as ctx
-import rasterio
-import fiona
-from fiona.crs import from_epsg
+import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from matplotlib.patches import FancyArrow
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
-from scipy.ndimage import distance_transform_edt
-from scipy.ndimage import distance_transform_edt
+import rasterio
 from rasterio.features import rasterize
 from rasterio.mask import mask
 from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio.features import rasterize
+from rasterio.plot import show  # Import show here
 from shapely.geometry import mapping, Polygon
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
+import fiona
+from fiona.crs import from_epsg
+import contextily as ctx
+from scipy.ndimage import distance_transform_edt
 
 
 def get_directory_name():
@@ -232,7 +232,7 @@ class GisMcda:
                               dst_transform=transform, dst_crs=self.boundary.crs, resampling=Resampling.nearest)
 
                     # Clip the reprojected raster to the boundary
-                    out_image, out_transform = mask([reprojected, transform], [self.boundary.geometry.unary_union], crop=True)
+                    out_image, out_transform = mask(src, [mapping(self.boundary.geometry[0])], crop=True)
                     out_meta = kwargs.copy()
                     out_meta.update({"driver": "GTiff",
                                      "height": out_image.shape[1],
@@ -241,8 +241,22 @@ class GisMcda:
 
                     self.rasters[raster_file] = (out_image, out_meta)
 
-    # You can add more methods for different MCDA techniques here
-    # For example:
+    def print_rasters(self):
+        for raster_file, (out_image, out_meta) in self.rasters.items():
+            print(f"Raster file: {raster_file}")
+            print(f"Image shape: {out_image.shape}")
+            print(f"Metadata: {out_meta}")
+            print("\n")
+
+    def plot_rasters(self):
+        for raster_file, (out_image, out_meta) in self.rasters.items():
+            fig, ax = plt.subplots()
+            im = show(out_image[0], ax=ax, cmap='viridis', vmin=0, vmax=5)  # Store the returned object in im
+            ax.set_title(raster_file)
+            plt.colorbar(im.get_images()[0], ax=ax)  # Use im here
+            plt.show()
+    
+    # Methods for different MCDA techniques here
     def ahp(self):
         # Implement AHP method here
         pass
@@ -256,3 +270,4 @@ class GisMcda:
         pass
 
 gis_mcda = GisMcda(os.path.join(directory_name, 'criteria_layers'), os.path.join(directory_name, 'study_area/study_area_without_constraints.shp'))
+gis_mcda.plot_rasters()

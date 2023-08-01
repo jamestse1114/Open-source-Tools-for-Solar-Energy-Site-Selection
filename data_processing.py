@@ -4,12 +4,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import geopandas as gpd
+import contextily as ctx
 import rasterio
 import fiona
-import contextily as ctx
-import matplotlib.font_manager as fm
 from fiona.crs import from_epsg
+import matplotlib.font_manager as fm
 from matplotlib.patches import FancyArrow
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from scipy.ndimage import distance_transform_edt
 from scipy.ndimage import distance_transform_edt
 from rasterio.features import rasterize
@@ -20,7 +21,6 @@ from rasterio.features import rasterize
 from shapely.geometry import mapping, Polygon
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
-from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 
 
 def get_directory_name():
@@ -186,4 +186,73 @@ def plot_shapefile(directory_name, file_name, base_map_file_name=None):
 
     plt.show()
 
-plot_shapefile(directory_name, 'study_area/study_area_without_constraints.shp', 'data/hk_boundary.shp')
+# plot_shapefile(directory_name, 'study_area/study_area_without_constraints.shp', 'data/hk_boundary.shp')
+
+
+class GisMcda:
+    def __init__(self, raster_directory, boundary_path):
+        self.raster_directory = raster_directory
+        self.boundary_path = boundary_path
+        self.boundary = gpd.read_file(boundary_path)
+        self.rasters = {}
+        self.clip_rasters()
+
+    def clip_rasters(self):
+        # Find the raster with the highest resolution (smallest pixel size)
+        min_res = float('inf')
+        
+        for raster_file in os.listdir(self.raster_directory):
+            if raster_file.endswith('.tif'):
+                raster_path = os.path.join(self.raster_directory, raster_file)
+                with rasterio.open(raster_path) as src:
+                    # resolution (pixel size) of the raster
+                    res = max(src.res)  
+                    if res < min_res:
+                        min_res = res
+
+        # Clip and reproject all rasters to match the boundary
+        for raster_file in os.listdir(self.raster_directory):
+            if raster_file.endswith('.tif'):
+                raster_path = os.path.join(self.raster_directory, raster_file)
+                with rasterio.open(raster_path) as src:
+                    # Reproject the raster to match the boundary's CRS and resolution
+                    transform, width, height = calculate_default_transform(
+                        src.crs, self.boundary.crs, src.width, src.height, *src.bounds, resolution=min_res)
+                    kwargs = src.meta.copy()
+                    kwargs.update({
+                        'crs': self.boundary.crs,
+                        'transform': transform,
+                        'width': width,
+                        'height': height
+                    })
+
+                    # Read the reprojected raster
+                    reprojected = np.empty((src.count, height, width))
+                    reproject(src.read(), reprojected, src_transform=src.transform, src_crs=src.crs,
+                              dst_transform=transform, dst_crs=self.boundary.crs, resampling=Resampling.nearest)
+
+                    # Clip the reprojected raster to the boundary
+                    out_image, out_transform = mask([reprojected, transform], [self.boundary.geometry.unary_union], crop=True)
+                    out_meta = kwargs.copy()
+                    out_meta.update({"driver": "GTiff",
+                                     "height": out_image.shape[1],
+                                     "width": out_image.shape[2],
+                                     "transform": out_transform})
+
+                    self.rasters[raster_file] = (out_image, out_meta)
+
+    # You can add more methods for different MCDA techniques here
+    # For example:
+    def ahp(self):
+        # Implement AHP method here
+        pass
+
+    def topsis(self):
+        # Implement TOPSIS method here
+        pass
+
+    def electre(self):
+        # Implement ELECTRE method here
+        pass
+
+gis_mcda = GisMcda(os.path.join(directory_name, 'criteria_layers'), os.path.join(directory_name, 'study_area/study_area_without_constraints.shp'))

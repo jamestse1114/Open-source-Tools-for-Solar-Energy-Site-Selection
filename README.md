@@ -3,7 +3,7 @@
 ## Description
 This repository contains open-source Python tools for multi-criteria decision analysis (MCDA) of potential renewable energy sites. The tools use various geospatial data layers to assess the suitability of different locations for renewable energy installations, such as wind turbines. 
 
-A case study of wind turbine site selection in Hong kong is used to demonstrate the application of these tools. It utilizes criteria such as wind speed, elevation, roughness, slope and proximity to settlements.
+A case study of wind turbine site selection in Hong Kong is used to demonstrate the application of these tools. It utilizes criteria such as wind speed, elevation, roughness, slope and proximity to settlements.
 
 The decision-making process involves the Analytic Hierarchy Process (AHP), Technique for Order Preference by Similarity to Ideal Solution (TOPSIS), ELimination Et Choix Traduisant la REalité (ELECTRE), and VlseKriterijumska Optimizacija I Kompromisno Resenje (VIKOR) methods. These methods use pairwise comparisons of alternatives to rank or select alternatives. 
 
@@ -22,7 +22,3 @@ After running the tools, the output will be a set of raster files representing t
 
 
 To start using it, you'll need to install Python and some essential libraries. Please refer to the [Installation Guide](#) for detailed instructions. Once you have the prerequisites installed, you can download or clone this repository.
-
-## References
-
-Millington, J. and Jupp, D., 2017. Python in practice: Create better programs using concurrency, libraries, and patterns. Boston: Addison-Wesley Professional.

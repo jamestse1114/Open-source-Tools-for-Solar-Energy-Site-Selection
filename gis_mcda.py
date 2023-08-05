@@ -1,5 +1,6 @@
 import os
 import ast
+import shutil
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -13,7 +14,7 @@ from rasterio.mask import mask
 from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio.features import rasterize
-from rasterio.plot import show  # Import show here
+from rasterio.plot import show
 from shapely.geometry import mapping, Polygon
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
@@ -33,10 +34,10 @@ def get_directory_name():
         print(f"The directory {directory_name} does not exist.")
         return None
 
+    print(directory_name)
     return directory_name
 
 directory_name = "hk_wind_turbine_site_selection_case_study"
-
 
 def study_area_removed_contraints(directory_name, study_area_file_name, constraint_layers_folder_name):
     
@@ -80,7 +81,6 @@ def study_area_removed_contraints(directory_name, study_area_file_name, constrai
     processed_study_area.to_file(output_path)
 
 # study_area_removed_contraints(get_directory_name(), 'hk_boundary.shp', 'constraint_layers')
-
 
 def reclassify_raster_layer(directory_name, input_file_name, output_folder_name, reclass_dictionary):
     
@@ -129,7 +129,6 @@ def reclassify_raster_layer(directory_name, input_file_name, output_folder_name,
 #     5: (float('-inf'), 40)}
 # reclassify_raster_layer(directory_name, 'elevation.tif', 'criteria_layers', reclassification_dict)
 
-
 def plot_raster(directory_name, file_name):
     file_path = os.path.join(directory_name, file_name)
 
@@ -151,7 +150,6 @@ def plot_raster(directory_name, file_name):
     plt.show()
 
 # plot_raster(directory_name, 'criteria_layers/reclassified_elevation.tif')
-
 
 def plot_shapefile(directory_name, file_name, base_map_file_name=None):
     
@@ -188,36 +186,42 @@ def plot_shapefile(directory_name, file_name, base_map_file_name=None):
 
 # plot_shapefile(directory_name, 'study_area/study_area_without_constraints.shp', 'data/hk_boundary.shp')
 
+def check_raster_shapes(directory):
+    shapes = {}
+    for filename in os.listdir(directory):
+        if filename.endswith(".tif"):
+            with rasterio.open(os.path.join(directory, filename)) as dataset:
+                array = dataset.read(1)
+                shapes[filename] = array.shape
+    return shapes
 
 class GisMcda:
+    
     def __init__(self, raster_directory, boundary_path):
         self.raster_directory = raster_directory
         self.boundary_path = boundary_path
         self.boundary = gpd.read_file(boundary_path)
         self.rasters = {}
-        self.clip_rasters()
+        self.clipped_directory = os.path.join(os.path.dirname(raster_directory), 'clipped_criteria_layers')
+        os.makedirs(self.clipped_directory, exist_ok=True)
+        self.process_rasters()
 
-    def clip_rasters(self):
-        # Find the raster with the highest resolution (smallest pixel size)
+    def process_rasters(self):
         min_res = float('inf')
-        
+
         for raster_file in os.listdir(self.raster_directory):
             if raster_file.endswith('.tif'):
                 raster_path = os.path.join(self.raster_directory, raster_file)
                 with rasterio.open(raster_path) as src:
-                    # resolution (pixel size) of the raster
-                    res = max(src.res)  
+                    res = max(src.res)
                     if res < min_res:
                         min_res = res
 
-        # Clip and reproject all rasters to match the boundary
         for raster_file in os.listdir(self.raster_directory):
             if raster_file.endswith('.tif'):
                 raster_path = os.path.join(self.raster_directory, raster_file)
                 with rasterio.open(raster_path) as src:
-                    # Reproject the raster to match the boundary's CRS and resolution
-                    transform, width, height = calculate_default_transform(
-                        src.crs, self.boundary.crs, src.width, src.height, *src.bounds, resolution=min_res)
+                    transform, width, height = calculate_default_transform(src.crs, self.boundary.crs, src.width, src.height, *src.bounds, resolution=min_res)
                     kwargs = src.meta.copy()
                     kwargs.update({
                         'crs': self.boundary.crs,
@@ -226,59 +230,88 @@ class GisMcda:
                         'height': height
                     })
 
-                    # Read the reprojected raster
                     reprojected = np.empty((src.count, height, width))
                     reproject(src.read(), reprojected, src_transform=src.transform, src_crs=src.crs,
-                              dst_transform=transform, dst_crs=self.boundary.crs, resampling=Resampling.nearest)
+                            dst_transform=transform, dst_crs=self.boundary.crs, resampling=Resampling.nearest)
 
-                    # Clip the reprojected raster to the boundary
                     out_image, out_transform = mask(src, [mapping(self.boundary.geometry[0])], crop=True)
                     out_meta = kwargs.copy()
                     out_meta.update({"driver": "GTiff",
-                                     "height": out_image.shape[1],
-                                     "width": out_image.shape[2],
-                                     "transform": out_transform})
+                                    "height": out_image.shape[1],
+                                    "width": out_image.shape[2],
+                                    "transform": out_transform})
 
-                    self.rasters[raster_file] = (out_image, out_meta)
+                    clipped_raster_path = os.path.join(self.clipped_directory, raster_file.replace(".tif", "_clipped.tif"))
+                    try:
+                        if os.path.exists(clipped_raster_path):
+                            os.remove(clipped_raster_path)
+                        with rasterio.open(clipped_raster_path, 'w', **out_meta) as dst:
+                            dst.write(reprojected)
+                    except Exception as e:
+                        print(f"Could not open or delete the file {clipped_raster_path}. Error: {str(e)}")
+                        continue
 
-    def print_rasters(self):
-        for raster_file, (out_image, out_meta) in self.rasters.items():
-            print(f"Raster file: {raster_file}")
-            print(f"Image shape: {out_image.shape}")
-            print(f"Metadata: {out_meta}")
-            print("\n")
+                    self.rasters[raster_file] = rasterio.open(clipped_raster_path)
 
-    def plot_rasters(self):
-        # Calculate the number of rows and columns for the subplot grid
-        n = len(self.rasters)
-        cols = 2  # You can adjust this depending on how you want to arrange your subplots
-        rows = n // cols
-        rows += n % cols
-
-        # Create a figure and a grid of subplots
-        fig, axs = plt.subplots(rows, cols, figsize=(20, 20))
-
-        # Flatten the array of axes, so we can easily iterate over it
-        axs = axs.ravel()
-
-        # Loop through each raster and each axis
-        for i, (raster_file, (out_image, out_meta)) in enumerate(self.rasters.items()):
-            # Display the raster
-            im = axs[i].imshow(out_image[0], cmap='viridis', vmin=0, vmax=5)
-            axs[i].set_title(raster_file)
-            fig.colorbar(im, ax=axs[i])
-
-        # If there are any remaining subplots, remove them
-        for j in range(i+1, rows*cols):
-            fig.delaxes(axs[j])
-
-        plt.tight_layout()
-        plt.show()
-
-    # Methods for different MCDA techniques here
     def ahp(self):
-        # Implement AHP method here
-        pass
+        min_rank = int(input("Please enter the minimum rank: "))
+        max_rank = int(input("Please enter the maximum rank: "))
+
+        print(f"Please rank the importance of each criteria on a scale from {min_rank}-{max_rank}, where {min_rank} indicates equal importance and {max_rank} indicates extreme importance.")
+        criteria_importance = {}
+        for i, raster_file in enumerate(self.rasters.keys()):
+            importance = float(input(f"Please enter the importance for criteria '{raster_file}': "))
+            criteria_importance[raster_file] = importance
+
+        num_criteria = len(self.rasters)
+        matrix = np.zeros((num_criteria, num_criteria))
+        for i, criteria_i in enumerate(self.rasters.keys()):
+            for j, criteria_j in enumerate(self.rasters.keys()):
+                if i == j:
+                    matrix[i, j] = 1
+                elif i < j:
+                    matrix[i, j] = criteria_importance[criteria_i] / criteria_importance[criteria_j]
+                else:
+                    matrix[i, j] = 1 / (criteria_importance[criteria_j] / criteria_importance[criteria_i])
+
+        print("Pairwise comparison matrix:")
+        print(matrix)
+
+        eigvals, eigvecs = np.linalg.eig(matrix)
+        max_index = np.argmax(eigvals)
+        weights = np.real(eigvecs[:, max_index])
+        weights = weights / np.sum(weights)
+
+        lambda_max = np.sum(weights * np.sum(matrix, axis=1))
+        ci = (lambda_max - num_criteria) / (num_criteria - 1)
+        ri = {1: 0, 2: 0, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49, 11: 1.51, 12: 1.48, 13: 1.56, 14: 1.57, 15: 1.59, 16: 1.6, 17: 1.61, 18: 1.62, 19: 1.63, 20: 1.64}
+        cr = ci / ri[num_criteria]
+        print(f"Consistency ratio: {cr}")
+
+        self.ahp_weights = dict(zip(self.rasters.keys(), weights))
+
+        # Print the final weights for each raster layer
+        print("Final weights for each raster layer:")
+        for raster_file, weight in self.ahp_weights.items():
+            print(f"{raster_file}: {weight}")
+
+        suitability_score_sum = None
+        raster_transform = None
+
+        for raster_file, raster in self.rasters.items():
+            raster_data = raster.read(1)
+            if suitability_score_sum is None:
+                suitability_score_sum = np.zeros_like(raster_data)
+            suitability_score_sum += self.ahp_weights[raster_file] * raster_data
+
+            raster_transform = raster.transform
+
+        study_area_mask = rasterize([(x.geometry, 1) for i, x in self.boundary.iterrows()], out_shape=suitability_score_sum.shape, transform=raster.transform, fill=0, all_touched=True, dtype=np.uint8)
+        suitability_score_sum = suitability_score_sum * study_area_mask
+
+        # Write the weighted sum scores to a new GeoTIFF file
+        with rasterio.open('weighted_sum_scores.tif', 'w', driver='GTiff', height=suitability_score_sum.shape[0], width=suitability_score_sum.shape[1], count=1, dtype=str(suitability_score_sum.dtype), crs=next(iter(self.rasters.values())).crs, transform=next(iter(self.rasters.values())).transform) as dst:
+            dst.write(suitability_score_sum, 1)
 
     def topsis(self):
         # Implement TOPSIS method here
@@ -289,4 +322,4 @@ class GisMcda:
         pass
 
 gis_mcda = GisMcda(os.path.join(directory_name, 'criteria_layers'), os.path.join(directory_name, 'study_area/study_area_without_constraints.shp'))
-gis_mcda.plot_rasters()
+gis_mcda.ahp()

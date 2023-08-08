@@ -1,31 +1,23 @@
 import os
-import ast
-import shutil
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 from matplotlib.patches import FancyArrow
-from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 import rasterio
 from rasterio.features import rasterize
 from rasterio.mask import mask
-from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject, Resampling
-from rasterio.features import rasterize
-from rasterio.plot import show
-from shapely.geometry import mapping, Polygon
-from shapely.geometry import Polygon
-from shapely.ops import unary_union
-import fiona
-from fiona.crs import from_epsg
-import contextily as ctx
-from scipy.ndimage import distance_transform_edt
+from shapely.geometry import mapping
+from scipy.stats import rankdata
+from skcriteria.preprocessing import invert_objectives
+from skcriteria.madm import simple, similarity
+from skcriteria.madm.similarity import TOPSIS
+from skcriteria import DecisionMatrix
 
+directory_name = "hk_wind_turbine_site_selection_case_study"
 
 def get_directory_name():
-    
     # Ask the user for the directory name
     directory_name = input("Please enter the directory name: ")
 
@@ -37,10 +29,7 @@ def get_directory_name():
     print(directory_name)
     return directory_name
 
-directory_name = "hk_wind_turbine_site_selection_case_study"
-
 def study_area_removed_contraints(directory_name, study_area_file_name, constraint_layers_folder_name):
-    
     study_area_path = os.path.join(directory_name, 'data', study_area_file_name)
     constraint_layers_path = os.path.join(directory_name, constraint_layers_folder_name)
     
@@ -80,10 +69,7 @@ def study_area_removed_contraints(directory_name, study_area_file_name, constrai
     output_path = os.path.join(directory_name, 'study_area', 'study_area_without_constraints.shp')
     processed_study_area.to_file(output_path)
 
-# study_area_removed_contraints(get_directory_name(), 'hk_boundary.shp', 'constraint_layers')
-
-def reclassify_raster_layer(directory_name, input_file_name, output_folder_name, reclass_dictionary):
-    
+def reclassify_raster_layer(directory_name, input_file_name, output_folder_name, reclass_dictionary):  
     input_file_path = os.path.join(directory_name, 'data', input_file_name)
     output_folder_path = os.path.join(directory_name, "criteria_layers")
     
@@ -122,13 +108,6 @@ def reclassify_raster_layer(directory_name, input_file_name, output_folder_name,
     with rasterio.open(output_file_path, 'w', **meta) as dest:
         dest.write(reclassified, 1)
 
-# reclassification_dict = {1: (150, float('inf')),
-#     2: (120, 150),
-#     3: (80, 120),
-#     4: (40, 80),
-#     5: (float('-inf'), 40)}
-# reclassify_raster_layer(directory_name, 'elevation.tif', 'criteria_layers', reclassification_dict)
-
 def plot_raster(directory_name, file_name):
     file_path = os.path.join(directory_name, file_name)
 
@@ -149,10 +128,7 @@ def plot_raster(directory_name, file_name):
     # Display the plot
     plt.show()
 
-# plot_raster(directory_name, 'criteria_layers/reclassified_elevation.tif')
-
 def plot_shapefile(directory_name, file_name, base_map_file_name=None):
-    
     file_path = os.path.join(directory_name, file_name)
 
     # Load the shapefile
@@ -184,19 +160,14 @@ def plot_shapefile(directory_name, file_name, base_map_file_name=None):
 
     plt.show()
 
-# plot_shapefile(directory_name, 'study_area/study_area_without_constraints.shp', 'data/hk_boundary.shp')
-
 def check_raster_shapes(directory):
-    shapes = {}
     for filename in os.listdir(directory):
         if filename.endswith(".tif"):
             with rasterio.open(os.path.join(directory, filename)) as dataset:
                 array = dataset.read(1)
-                shapes[filename] = array.shape
-    return shapes
+                print(array.shape)
 
-class GisMcda:
-    
+class GisMcda: 
     def __init__(self, raster_directory, boundary_path):
         self.raster_directory = raster_directory
         self.boundary_path = boundary_path
@@ -209,6 +180,7 @@ class GisMcda:
     def process_rasters(self):
         min_res = float('inf')
 
+        # find the largest resolution in the raster layers
         for raster_file in os.listdir(self.raster_directory):
             if raster_file.endswith('.tif'):
                 raster_path = os.path.join(self.raster_directory, raster_file)
@@ -217,6 +189,7 @@ class GisMcda:
                     if res < min_res:
                         min_res = res
 
+        # transforming all the raster layers
         for raster_file in os.listdir(self.raster_directory):
             if raster_file.endswith('.tif'):
                 raster_path = os.path.join(self.raster_directory, raster_file)
@@ -263,6 +236,7 @@ class GisMcda:
             importance = float(input(f"Please enter the importance for criteria '{raster_file}': "))
             criteria_importance[raster_file] = importance
 
+        # Matrix Calculation
         num_criteria = len(self.rasters)
         matrix = np.zeros((num_criteria, num_criteria))
         for i, criteria_i in enumerate(self.rasters.keys()):
@@ -277,6 +251,7 @@ class GisMcda:
         print("Pairwise comparison matrix:")
         print(matrix)
 
+        # Consistency Ratio Calculation
         eigvals, eigvecs = np.linalg.eig(matrix)
         max_index = np.argmax(eigvals)
         weights = np.real(eigvecs[:, max_index])
@@ -288,6 +263,7 @@ class GisMcda:
         cr = ci / ri[num_criteria]
         print(f"Consistency ratio: {cr}")
 
+        # Save the ahp weightings as an attribute
         self.ahp_weights = dict(zip(self.rasters.keys(), weights))
 
         # Print the final weights for each raster layer
@@ -295,6 +271,7 @@ class GisMcda:
         for raster_file, weight in self.ahp_weights.items():
             print(f"{raster_file}: {weight}")
 
+        # Calculate the suitability score for AHP and Weighted Sum Calculation and Export it as an AHP-Weighted Sum Suitability Score
         suitability_score_sum = None
         raster_transform = None
 
@@ -310,16 +287,121 @@ class GisMcda:
         suitability_score_sum = suitability_score_sum * study_area_mask
 
         # Write the weighted sum scores to a new GeoTIFF file
-        with rasterio.open('weighted_sum_scores.tif', 'w', driver='GTiff', height=suitability_score_sum.shape[0], width=suitability_score_sum.shape[1], count=1, dtype=str(suitability_score_sum.dtype), crs=next(iter(self.rasters.values())).crs, transform=next(iter(self.rasters.values())).transform) as dst:
+        with rasterio.open('ahp_weighted_sum_scores.tif', 'w', driver='GTiff', height=suitability_score_sum.shape[0], width=suitability_score_sum.shape[1], count=1, dtype=str(suitability_score_sum.dtype), crs=next(iter(self.rasters.values())).crs, transform=next(iter(self.rasters.values())).transform) as dst:
             dst.write(suitability_score_sum, 1)
 
     def topsis(self):
-        # Implement TOPSIS method here
-        pass
+        # Create an empty list to store the 1D arrays
+        decision_matrix = []
 
-    def electre(self):
-        # Implement ELECTRE method here
-        pass
+        for raster_file, raster in self.rasters.items():
+            # Read and reshape the raster data to a 1D array
+            raster_data = raster.read(1).astype(float)
+            
+            # Handle extreme values in raster data
+            extreme_values = [-1.7976931348623157e+308, -3.4028234663852886e+38]
+            for extreme in extreme_values:
+                raster_data[raster_data == extreme] = np.nan
+
+            # Debugging print to show the range of values for each raster
+            print(f"Raster: {raster_file}, Min Value: {np.nanmin(raster_data)}, Max Value: {np.nanmax(raster_data)}")
+
+            # Handle invalid values in raster data
+            raster_data[np.isinf(raster_data)] = 0
+            raster_data[np.isnan(raster_data)] = 1e-10  # Replacing NaN with a small value for computation
+
+            decision_matrix.append(raster_data.reshape(-1))
+        
+        # Convert the list of 1D arrays to a 2D array
+        decision_matrix = np.array(decision_matrix).T
+
+        print(f"Shape of decision_matrix: {decision_matrix.shape}")
+        
+        # Define the objectives, 1 for maximization and -1 for minimization
+        objectives = [1 if self.criteria_direction[raster_file] else -1 for raster_file in self.rasters.keys()]
+
+        # Define the weights
+        weights = [self.ahp_weights[raster_file] for raster_file in self.rasters.keys()]
+
+        # Create a DecisionMatrix object
+        mtx = DecisionMatrix(decision_matrix, objectives, weights)
+
+        # Create a TOPSIS object
+        topsis = TOPSIS(metric='euclidean')
+
+        # Run TOPSIS
+        decision = topsis.evaluate(mtx)
+
+        # Assign the similarity scores to the topsis_score variable
+        topsis_score = decision.e_.similarity
+
+        # Reshape the 1D array back to a 2D array with the same shape as the raster data
+        topsis_score = topsis_score.reshape(raster_data.shape)
+
+        # Reassign NaN values to the final output raster
+        topsis_score[np.isnan(raster_data)] = np.nan
+
+        # Reshape the 1D array back to a 2D array with the same shape as the raster data
+        topsis_score = topsis_score.reshape(raster_data.shape)  # Use raster_data.shape instead of self.sample_raster_data.shape
+
+        # Reassign NaN values to the final output raster
+        topsis_score[np.isnan(raster_data)] = np.nan
+
+        return topsis_score
+
+
+# study_area_removed_contraints(get_directory_name(), 'hk_boundary.shp', 'constraint_layers')
+
+# reclassification_dict = {1: (150, float('inf')),
+#     2: (120, 150),
+#     3: (80, 120),
+#     4: (40, 80),
+#     5: (float('-inf'), 40)}
+# reclassify_raster_layer(directory_name, 'elevation.tif', 'criteria_layers', reclassification_dict)
+
+# plot_raster(directory_name, 'criteria_layers/reclassified_elevation.tif')
+
+# plot_shapefile(directory_name, 'study_area/study_area_without_constraints.shp', 'data/hk_boundary.shp')
+
+# print(check_raster_shapes("hk_wind_turbine_site_selection_case_study/clipped_criteria_layers"))
 
 gis_mcda = GisMcda(os.path.join(directory_name, 'criteria_layers'), os.path.join(directory_name, 'study_area/study_area_without_constraints.shp'))
-gis_mcda.ahp()
+# gis_mcda.ahp_weights = {'reclassified_elevation.tif': 0.1190476190476191, 'reclassified_railway.tif': 0.07142857142857147, 'reclassified_river.tif': 0.07142857142857144, 'reclassified_road.tif': 0.047619047619047616, 'reclassified_roughness.tif': 0.14285714285714288, 'reclassified_settlements.tif': 0.16666666666666669, 'reclassified_slope.tif': 0.09523809523809523, 'reclassified_vegetation.tif': 0.07142857142857144, 'reclassified_wind_speed.tif': 0.21428571428571427}
+# gis_mcda.criteria_direction = {
+#             'reclassified_elevation.tif': True,  # True for maximization, False for minimization
+#             'reclassified_railway.tif': True,
+#             'reclassified_river.tif': True,
+#             'reclassified_road.tif': True,
+#             'reclassified_roughness.tif': True,
+#             'reclassified_settlements.tif': True,
+#             'reclassified_slope.tif': True,
+#             'reclassified_vegetation.tif': True,
+#             'reclassified_wind_speed.tif': True
+#         }
+gis_mcda.ahp_weights = {'reclassified_elevation.tif': 0.1190476190476191, 
+                        'reclassified_roughness.tif': 0.14285714285714288, 
+                        'reclassified_slope.tif': 0.09523809523809523, 
+                        'reclassified_wind_speed.tif': 0.21428571428571427}
+gis_mcda.criteria_direction = {
+            'reclassified_elevation.tif': True,  # True for maximization, False for minimization
+            'reclassified_roughness.tif': True,
+            'reclassified_slope.tif': True,
+            'reclassified_wind_speed.tif': True
+        }
+# gis_mcda.ahp()
+
+g = gis_mcda.topsis()
+print(gis_mcda.topsis())
+print(g.shape)
+print(np.nanmin(g))
+print(np.nanmax(g))
+
+check_raster_shapes("hk_wind_turbine_site_selection_case_study/clipped_criteria_layers")
+check_raster_shapes("hk_wind_turbine_site_selection_case_study/criteria_layers")
+
+def check_raster_shapes(directory):
+    for filename in os.listdir(directory):
+        if filename.endswith(".tif"):
+            with rasterio.open(os.path.join(directory, filename)) as dataset:
+                array = dataset.read(1)
+                print(array.shape)

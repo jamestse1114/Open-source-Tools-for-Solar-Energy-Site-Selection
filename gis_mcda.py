@@ -19,6 +19,8 @@ from skcriteria.madm import simple, similarity
 from skcriteria.madm import electre
 from skcriteria.madm.similarity import TOPSIS
 from pyDecision.algorithm import fuzzy_ahp_method
+from pyDecision.algorithm import fuzzy_topsis_method
+from pymcdm.methods import VIKOR
 
 
 def prompt_directory_name():
@@ -154,7 +156,7 @@ def check_raster(directory):
                 min_value = np.min(data)
                 max_value = np.max(data)
                 print(f"Range: {min_value} to {max_value}")
-                
+      
 
 class GisMcda:
     def __init__(self, raster_directory, boundary_path):
@@ -286,11 +288,11 @@ class GisMcda:
         # Update the self.raster dictionary to point to the clipped rasters
         self.raster = {os.path.basename(file): os.path.join(self.raster_directory, file) for file in os.listdir(self.raster_directory) if file.endswith('.tif')}
 
-
     def ahp(self):
         """Get the weights and directions of each criteria using AHP."""
         
-        print("Please provide three values representing the importance of each criterion:")
+        print("\nThe following is ahp -----------------------------------------------------------------------")
+        print("Please provide the value representing the importance of each criterion:")
         criteria_importance = {}
         criteria_direction = {}
         
@@ -326,14 +328,19 @@ class GisMcda:
         ri = {1: 0, 2: 0, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49, 11: 1.51, 12: 1.48,
               13: 1.56, 14: 1.57, 15: 1.59, 16: 1.6, 17: 1.61, 18: 1.62, 19: 1.63, 20: 1.64}
         cr = ci / ri[num_criteria]
-        print(f"Consistency ratio: {cr}")
 
+        print(f"\nConsistency Ratio (RC): {cr}")
+        if cr > 0.10:
+            print('The solution is inconsistent (RC > 0.10), the pairwise comparisons must be reviewed')
+        else:
+            print('The solution is consistent (RC <= 0.10)')
+            
         # Save the ahp weightings and direction as attributes
         self.criteria_weights = dict(zip(self.raster.keys(), weights))
         self.criteria_direction = criteria_direction
 
         # Print the final weights for each raster layer
-        print("Final weights for each raster layer:")
+        print("\nFinal weights for each raster layer:")
         for raster_file, weight in self.criteria_weights.items():
             print(f"{raster_file}: {weight}")
 
@@ -345,7 +352,8 @@ class GisMcda:
 
         # Create an empty list to store the importance values for each criterion
         criteria_importance = []
-
+        
+        print("\nThe following is fahp -----------------------------------------------------------------------")
         print("Please provide three values representing the importance of each criterion:")
 
         criteria_direction = {}
@@ -368,7 +376,7 @@ class GisMcda:
 
         # Call Fuzzy AHP Function from pydecision
         fuzzy_weights, defuzzified_weights, normalized_weights, rc = fuzzy_ahp_method(dataset)
-
+        
         # Print the results
         print("\nFuzzy Weights:")
         for i, raster_file in enumerate(self.raster.keys()):
@@ -382,7 +390,7 @@ class GisMcda:
         for i, raster_file in enumerate(self.raster.keys()):
             print(f"{raster_file}: {round(normalized_weights[i], 3)}")
 
-        print(f"\nConsistency Ratio (RC): {round(rc, 2)}")
+        print(f"\nConsistency Ratio (RC): {rc}")
         if rc > 0.10:
             print('The solution is inconsistent (RC > 0.10), the pairwise comparisons must be reviewed')
         else:
@@ -390,6 +398,7 @@ class GisMcda:
 
         # Save the FAHP weightings and direction as attributes
         self.criteria_weights = dict(zip(self.raster.keys(), normalized_weights))
+        self.fuzzy_weights = dict(zip(self.raster.keys(), fuzzy_weights))
         self.criteria_direction = criteria_direction
 
     def process_skcriteria(self):
@@ -429,7 +438,7 @@ class GisMcda:
 
         return decision_matrix, weights, objectives, common_valid_indices
 
-    def process_pydecision(self):
+    def process_pymcdm(self):
         """Transform the data for pyDecision."""
 
         # Create an empty list to store the 1D arrays
@@ -437,49 +446,101 @@ class GisMcda:
         valid_indices_list = [] 
         
         for raster_file, raster_path in self.raster.items():
-            # Open the raster file with rasterio
             with rasterio.open(raster_path) as src:
                 raster_data = src.read(1).astype(float)
 
-            # Handle extreme values in raster data
-            extreme_values = [-1.7976931348623157e+308, -3.4028234663852886e+38]
-            for extreme in extreme_values:
-                raster_data[raster_data == extreme] = np.nan
+                # Debugging print
+                print(f"Raster: {raster_file}, Min Value: {np.nanmin(raster_data)}, Max Value: {np.nanmax(raster_data)}")
 
-            # Debugging print to show the range of values for each raster
-            print(f"Raster: {raster_file}, Min Value: {np.nanmin(raster_data)}, Max Value: {np.nanmax(raster_data)}")
+                # Handle extreme negative values
+                extreme_values = [-1.7976931348623157e+308, -3.4028234663852886e+38]
+                for extreme in extreme_values:
+                    raster_data[raster_data == extreme] = np.nan
 
-            # Handle invalid values in raster data
-            raster_data[np.isinf(raster_data)] = np.nan
+                # Handle invalid values in raster data
+                raster_data[np.isinf(raster_data)] = np.nan
 
-            flattened_data = raster_data.reshape(-1)
-            decision_matrix.append(flattened_data)
+                flattened_data = raster_data.reshape(-1)
+                decision_matrix.append(flattened_data)
 
-            valid_indices = np.where(~np.isnan(flattened_data))[0]
-            valid_indices_list.append(valid_indices)
+                valid_indices = np.where(~np.isnan(flattened_data))[0]
+                valid_indices_list.append(set(valid_indices))
 
         # Ensure all rasters have the same valid indices
-        common_valid_indices = np.intersect1d.reduce(valid_indices_list)
+        common_valid_indices = list(set.intersection(*valid_indices_list))
 
         # Filter the decision matrix to only include common valid values
         decision_matrix = np.array(decision_matrix)[:, common_valid_indices].T
 
         # Define the objectives (True for maximization and False for minimization)
         objectives = [self.criteria_direction[raster_file] for raster_file in self.raster.keys()]
-
+        objectives = ['max' if obj else 'min' for obj in objectives]
+        
         # Define the weights
         weights = [self.criteria_weights[raster_file] for raster_file in self.raster.keys()]
-
+        
         # Define criteria names
         criteria_names = list(self.raster.keys())
 
         # Define alternatives names (assuming each row in the decision matrix is an alternative)
         alternatives_names = [f"Alternative_{i}" for i in range(1, decision_matrix.shape[0] + 1)]
 
-        return decision_matrix, weights, criteria_names, alternatives_names, objectives
+        return decision_matrix, weights, criteria_names, alternatives_names, objectives, common_valid_indices
+    
+    def process_fuzzy(self):
+        """Transform the data for pyDecision."""
 
-    def weighted_sum(self):
-        """Calculate the suitability score using Weighted Sum with skcriteria."""
+        # Create an empty list to store the 1D arrays
+        decision_matrix = []
+        valid_indices_list = [] 
+        
+        for raster_file, raster_path in self.raster.items():
+            with rasterio.open(raster_path) as src:
+                raster_data = src.read(1).astype(float)
+
+                # Debugging print
+                print(f"Raster: {raster_file}, Min Value: {np.nanmin(raster_data)}, Max Value: {np.nanmax(raster_data)}")
+
+                # Handle extreme negative values
+                extreme_values = [-1.7976931348623157e+308, -3.4028234663852886e+38]
+                for extreme in extreme_values:
+                    raster_data[raster_data == extreme] = np.nan
+
+                # Handle invalid values in raster data
+                raster_data[np.isinf(raster_data)] = np.nan
+
+                flattened_data = raster_data.reshape(-1)
+                decision_matrix.append(flattened_data)
+
+                valid_indices = np.where(~np.isnan(flattened_data))[0]
+                valid_indices_list.append(set(valid_indices))
+
+        # Ensure all rasters have the same valid indices
+        common_valid_indices = list(set.intersection(*valid_indices_list))
+
+        # Filter the decision matrix to only include common valid values
+        decision_matrix = np.array(decision_matrix)[:, common_valid_indices].T
+
+        # Define the objectives (True for maximization and False for minimization)
+        objectives = [self.criteria_direction[raster_file] for raster_file in self.raster.keys()]
+        objectives = ['max' if obj else 'min' for obj in objectives]
+        
+        # Define the weights
+        weights = [self.fuzzy_weights[raster_file] for raster_file in self.raster.keys()]
+        
+        # Define criteria names
+        criteria_names = list(self.raster.keys())
+
+        # Define alternatives names (assuming each row in the decision matrix is an alternative)
+        alternatives_names = [f"Alternative_{i}" for i in range(1, decision_matrix.shape[0] + 1)]
+
+        return decision_matrix, weights, criteria_names, alternatives_names, objectives, common_valid_indices
+
+    def saw(self):
+        """Calculate the suitability score using Simple Additive Weighting with skcriteria."""
+        
+        print("\nThe following is Simple Additive Weighting --------------------------------------------------------------")
+        
         decision_matrix, weights, objectives, valid_indices = self.process_skcriteria()
         weighted_sum = simple.WeightedSumModel()
         rank = weighted_sum.evaluate(DecisionMatrix(decision_matrix, weights=weights, objectives=objectives))
@@ -506,6 +567,8 @@ class GisMcda:
     def topsis(self):
         """Calculate the suitability score using TOPSIS."""
 
+        print("\nThe following is TOPSIS --------------------------------------------------------------------")
+        
         # Use the process_skcriteria method to get the data structure needed for skcriteria package
         decision_matrix, weights, objectives, valid_indices = self.process_skcriteria()
 
@@ -533,27 +596,107 @@ class GisMcda:
                 dst.write(full_raster_scores, 1)
 
         return full_raster_scores
+    
+    def ftopsis(self, delta = 0.1, graph=False, verbose=False):
+        """Calculate the suitability score using Fuzzy TOPSIS."""
+        
+        print("\nThe following is Fuzzy TOPSIS --------------------------------------------------------------------")
+        
+        # Use the fuzzy method to get the data structure needed
+        decision_matrix, weights, criteria_names, alternatives_names, objectives, valid_indices = self.process_fuzzy()
+
+        # Convert the decision_matrix to fuzzy numbers
+        fuzzy_decision_matrix = []
+        for row in decision_matrix:
+            fuzzy_row = [(value-delta, value, value+delta) for value in row]
+            fuzzy_decision_matrix.append(fuzzy_row)
+
+        # Convert objectives to the format expected by pyDecision
+        criterion_type = ['max' if obj == 'max' else 'min' for obj in objectives]
+            
+        # Use the fuzzy_topsis method from pyDecision
+        scores = fuzzy_topsis_method(fuzzy_decision_matrix, [weights], criterion_type, graph, verbose)
+            
+        # Map the scores back to the original raster shape
+        temp_raster_path = list(self.raster.values())[0]
+        with rasterio.open(temp_raster_path) as src:
+            full_raster_scores = np.full(src.shape, np.nan)
+                
+            # This is the crucial step: mapping the computed scores back to their original positions
+            full_raster_scores.ravel()[valid_indices] = scores
+
+            # Validation for mapping
+            assert not np.isnan(full_raster_scores).all(), "All values in full_raster_scores are NaN!"
+
+            with rasterio.open("fuzzy_topsis_scores.tif", 'w', driver='GTiff',
+                            height=full_raster_scores.shape[0], width=full_raster_scores.shape[1],
+                            count=1, dtype=full_raster_scores.dtype,
+                            crs=src.crs, transform=src.transform) as dst:
+                dst.write(full_raster_scores, 1)
+                    
+        return full_raster_scores
+    
+    def vikor(self):
+        print("\nThe following is VIKOR --------------------------------------------------------------------")
+
+        # Use the process_pymcdm method to get the data structure needed
+        decision_matrix, weights, criteria_names, alternatives_names, objectives, valid_indices = self.process_pymcdm()
+
+        # Convert objectives to 1 (benefit) or -1 (cost) format for VIKOR in pymcdm
+        criteria_types = np.array([1 if obj == 'max' else -1 for obj in objectives])
+
+        # Ensure that decision_matrix, weights, and criteria_types are numpy arrays
+        decision_matrix = np.array(decision_matrix)
+        weights = np.array(weights)
+        criteria_types = np.array(criteria_types)
+
+        # Compute VIKOR scores using pymcdm
+        vikor_body = VIKOR()
+        q_values = vikor_body(decision_matrix, weights, criteria_types)
+
+        # Normalize and reverse the suitability scores
+        min_q = min(q_values)
+        max_q = max(q_values)
+        q_values = [(max_q - q) / (max_q - min_q) for q in q_values]
+        
+        # Map the scores back to the original raster shape
+        temp_raster_path = list(self.raster.values())[0]
+        with rasterio.open(temp_raster_path) as src:
+            full_raster_image = np.full(src.shape, np.nan)
+            
+            # This is the crucial step: mapping the computed scores back to their original positions
+            full_raster_image.ravel()[valid_indices] = q_values
+
+            # Validation for mapping
+            assert not np.isnan(full_raster_image).all(), "All values in full_raster_image are NaN!"
+
+            with rasterio.open("vikor_scores.tif", 'w', driver='GTiff',
+                            height=full_raster_image.shape[0], width=full_raster_image.shape[1],
+                            count=1, dtype=full_raster_image.dtype,
+                            crs=src.crs, transform=src.transform) as dst:
+                dst.write(full_raster_image, 1)
+
+        return q_values
 
 
-project_directory = "hk_wind_turbine_site_selection_case_study"
+if __name__ == "__main__":
+    
+    project_directory = "hk_wind_turbine_site_selection_case_study"
 
-gis_mcda = GisMcda("hk_wind_turbine_site_selection_case_study/criteria_layers",
-                   "hk_wind_turbine_site_selection_case_study/study_area/study_area_without_constraints.shp")
+    gis_mcda = GisMcda("hk_wind_turbine_site_selection_case_study/criteria_layers",
+                    "hk_wind_turbine_site_selection_case_study/study_area/study_area_without_constraints.shp")
 
-gis_mcda.check_raster()
-gis_mcda.transform_raster()
+    gis_mcda.check_raster()
+    gis_mcda.transform_raster()
 
-print("\nThe following are criteria_layers -----------------------------------------------------------------------")
-check_raster("hk_wind_turbine_site_selection_case_study/criteria_layers")
+    print("\nThe following are criteria_layers -----------------------------------------------------------------------")
+    check_raster("hk_wind_turbine_site_selection_case_study/criteria_layers")
 
-print("\nThe following are clipped_criteria_layers -----------------------------------------------------------------------")
-check_raster("hk_wind_turbine_site_selection_case_study/clipped_criteria_layers")
+    print("\nThe following are clipped_criteria_layers -----------------------------------------------------------------------")
+    check_raster("hk_wind_turbine_site_selection_case_study/clipped_criteria_layers")
 
-print("\nThe following is ahp -----------------------------------------------------------------------")
-gis_mcda.ahp()
-
-print("\nThe following is weighted sum --------------------------------------------------------------")
-gis_mcda.weighted_sum()
-
-print("\nThe following is topsis --------------------------------------------------------------------")
-gis_mcda.topsis()
+    gis_mcda.fahp()
+    gis_mcda.saw()
+    gis_mcda.topsis()
+    gis_mcda.vikor()
+    gis_mcda.ftopsis()

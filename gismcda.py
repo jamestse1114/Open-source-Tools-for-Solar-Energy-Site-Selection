@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrow
 import matplotlib.colors as mcolors
 import seaborn as sns
-import mplleaflet
 import fiona
 import rasterio
 from rasterio import features
@@ -20,7 +19,7 @@ from skcriteria import DecisionMatrix
 from skcriteria.madm import simple, similarity
 from skcriteria.madm.similarity import TOPSIS
 from pyDecision.algorithm import fuzzy_ahp_method, ranking
-from pymcdm.methods import VIKOR
+from pymcdm.methods import VIKOR, EDAS
 from pyfdm import methods
 from pyds import MassFunction
 
@@ -130,26 +129,61 @@ def plot_raster(raster):
     plt.show()
 
           
-def plot_shapefile(shapefile, base_map=None):
-    """
-        Display a shapefile with an optional base map.
-    """
-
-    shape = gpd.read_file(shapefile)
+def plot_shapefile(file_path, base_map_path=None):
+    
+    """Display a shapefile with an optional base map."""
+    
+    # Use gpd to read the file
+    shape = gpd.read_file(file_path)
+    
     fig, ax = plt.subplots(figsize=(10, 10))
     
-    if base_map:
-        base_map = gpd.read_file(base_map)
-        shape = shape.to_crs(base_map.crs)
-        base_map.plot(ax=ax, color='white', edgecolor='black')
-
+    # If base layer is provided
+    if base_map_path:
+        base = gpd.read_file(base_map_path)
+        shape = shape.to_crs(base.crs)
+        base.plot(ax=ax, color='white', edgecolor='black')
     shape.plot(ax=ax, color='red')
-    ax.grid(True)
     
+    # set ax grid as true
+    ax.grid(True)
     arrow = FancyArrow(0.9, 0.85, dx=0, dy=0.05, width=0.01, color='k', transform=fig.transFigure)
     fig.patches.append(arrow)
     plt.text(0.9, 0.9, 'N', transform=fig.transFigure)
-    mplleaflet.show(fig=ax.figure)
+    plt.show()
+
+
+def correlation_matrix(reclass_dict):
+    """
+    Compute and plot the correlation coefficient matrix for reclassified suitability map.
+    """
+    
+    # Initiate a combined mask
+    masking_variables_stored = np.zeros_like(list(reclass_dict.values())[0], dtype=bool)
+    for data in reclass_dict.values():
+        masking_variables_stored |= (data == 0) | (data == 1) | np.isnan(data)
+    
+    # Mask each of the array
+    for key, data in reclass_dict.items():
+        valid_data = data[~masking_variables_stored]
+        reclass_dict[key] = valid_data.flatten()
+    
+    # Check if the items have the same length
+    item_length = [len(arra) for arra in reclass_dict.values()]
+    if len(set(item_length)) > 1:
+        for key, arra in reclass_dict.items():
+            print(f"Length of {key}: {len(arra)}")
+        raise ValueError("Dictionary items have different length.")
+    
+    df = pd.DataFrame(reclass_dict)
+    correlation_matrix = df.corr()
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(correlation_matrix, annot=True, cmap='cividis', vmin=-1, vmax=1)
+    plt.show()
+    
+    return correlation_matrix
+
 
 
 class GisMcda:
@@ -390,18 +424,19 @@ class GisMcda:
         for raster_file_i in self.raster.keys():
             row = []
             for raster_file_j in self.raster.keys():
-                if raster_file_i == raster_file_j:
-                    row.append((1, 1, 1))
+                a_i, m_i, b_i = criteria_importance_dict[raster_file_i]
+                a_j, m_j, b_j = criteria_importance_dict[raster_file_j]
+
+                if m_i > m_j:
+                    row.append((a_i/a_j, m_i/m_j, b_i/b_j))
                 else:
-                    a, m, b = criteria_importance_dict[raster_file_i]
-                    if a > 1:
-                        row.append((1/b, 1/m, 1/a))
-                    else:
-                        row.append((a, m, b))
+                    row.append((a_j/a_i, m_j/m_i, b_j/b_i))
             fuzzy_matrix.append(row)
 
         # Fuzzy AHP Function from pydecision to get the fuzzy weights, defuzzified weights and normalised weights
-        fuzzy_weights, defuzzified_weights, normalized_weights, rc = fuzzy_ahp_method(fuzzy_matrix)
+        fuzzy_weights, defuzzified_weights, normalised_weights, rc = fuzzy_ahp_method(fuzzy_matrix)
+        reversed_fuzzy_weights = [(b, m, a) for a, m, b in fuzzy_weights]
+        fuzzy_weights = reversed_fuzzy_weights
         
         print("\nFuzzy Weights:")
         for k, raster_file in enumerate(self.raster.keys()):
@@ -413,7 +448,7 @@ class GisMcda:
 
         print("\nNormalized Weights:")
         for k, raster_file in enumerate(self.raster.keys()):
-            print(f"{raster_file}: {round(normalized_weights[k], 3)}")
+            print(f"{raster_file}: {round(normalised_weights[k], 3)}")
 
         print(f"\nConsistency Ratio (RC): {rc}")
         if rc > 0.10:
@@ -422,7 +457,7 @@ class GisMcda:
             print('The solution is consistent (RC <= 0.10)')
         
         self.criteria_direction = criteria_direction
-        self.criteria_weights = dict(zip(self.raster.keys(), normalized_weights))
+        self.criteria_weights = dict(zip(self.raster.keys(), normalised_weights))
         self.range_weights = dict(zip(self.raster.keys(), fuzzy_weights))
         
         return self.criteria_direction, self.criteria_weights, self.range_weights
@@ -433,7 +468,7 @@ class GisMcda:
         Bayesian theory to process and output a confidence interval of the weight of criteria. If 
         no uncertainty factor is provide, it will be assumed as 0.05.
         """
-    
+        
         if uncertainty_factor is None:
             uncertainty_factor = 0.05
 
@@ -441,53 +476,51 @@ class GisMcda:
 
         # Process each expert's opinion
         for expert_weights in criteria_weights_list:
+            # Normalise experts' weights
+            total_weight = sum(expert_weights.values())
+            normalised_weights = {k: v/total_weight for k, v in expert_weights.items()}
+            
             mf = MassFunction()
             
-            # Calculate the total mass based on the expert's weights
+            # Calculate total mass based on the normalized weights
             total_mass = 0
-            for criterion, weight in expert_weights.items():
-                uncertainty_factor = max(0, min(1, uncertainty_factor))
+            for criterion, weight in normalised_weights.items():
                 adjusted_weight = weight * (1 - uncertainty_factor)
                 mf[frozenset([criterion])] = adjusted_weight
                 total_mass += adjusted_weight
             
-            # Assign the remaining mass to represent the expert's uncertainty
-            mf[frozenset(expert_weights.keys())] = 1 - total_mass
+            # Distribute the remaining mass equally among all criteria
+            uncertainty_mass = (1 - total_mass) / len(normalised_weights)
+            for criterion in normalised_weights.keys():
+                mf[frozenset([criterion])] += uncertainty_mass
+            
             mass_functions.append(mf)
 
-        # Combine the mass functions from all experts' opinions
+        # Combine mass functions from all experts' opinions
         combined_mf = mass_functions[0]
         for next_mf in mass_functions[1:]:
             combined_mf = combined_mf & next_mf
 
-        # Get belief and plausibility values (lower and upper)
+        # Get belief and plausibility values
         beliefs = combined_mf.bel()
         plausibilities = combined_mf.pl()
 
-        # Save them to range weights and criteria weights
-        range_weights = {}
+        # Calculate final weights
         criteria_weights = {}
         for criteria_set, belief_value in beliefs.items():
-            # Only process the weights for single criteria
             if len(criteria_set) == 1:
                 the_criterion = list(criteria_set)[0]
-                lower_bound = belief_value
-                upper_bound = plausibilities[criteria_set]
-                mean_weight = (lower_bound + upper_bound) / 2
+                criteria_weights[the_criterion] = (belief_value + plausibilities[criteria_set]) / 2
 
-                range_weights[the_criterion] = (lower_bound, mean_weight, upper_bound)
-                criteria_weights[the_criterion] = mean_weight
+        # Normalize the final possibility
+        total_weight = sum(criteria_weights.values())
+        criteria_weights = {k: v/total_weight for k, v in criteria_weights.items()}
+            
+        print("\nPossibility for being the 1st importance:")
+        print(criteria_weights)
         
-        self.criteria_weights = criteria_weights
-        self.range_weights = range_weights
-        
-        print("\nRange Weights:")
-        print(self.range_weights)
-        
-        print("\nCriteria Weights:")
-        print(self.criteria_weights)
-        
-        return self.range_weights, self.criteria_weights
+        return criteria_weights
+
 
     def process_skcriteria(self):
         """
@@ -764,7 +797,7 @@ class GisMcda:
                             count=1, dtype=ftopsis_scores.dtype,
                             crs=src.crs, transform=src.transform) as dst:
                 dst.write(ftopsis_scores, 1)
-
+            
             # Reclassify the scores into num_class
             min_val = np.nanmin(ftopsis_scores)
             max_val = np.nanmax(ftopsis_scores)
@@ -914,6 +947,68 @@ class GisMcda:
                 
         return fvikor_scores, reclassified_data
     
+    def edas(self, num_class = 5):
+        """
+            Calculate the suitability scores and reclassified scores using EDAS with pymcdm.
+        """
+        
+        print("\nThe following is EDAS --------------------------------------------------------------------")
+
+        # Get the variables from the processing method
+        decision_matrix, weights, criteria_names, alternatives_names, objectives, valid_indices = self.process_pymcdm()
+        criteria_types = np.array([1 if obj == 'max' else -1 for obj in objectives])
+
+        # Change the variables to numpy array
+        decision_matrix = np.array(decision_matrix)
+        weights = np.array(weights)
+        criteria_types = np.array(criteria_types)
+
+        edas_by = EDAS()
+        q_values = edas_by(decision_matrix, weights, criteria_types)
+
+        # Normalize and Reverse the suitability scores
+        min_q = min(q_values)
+        max_q = max(q_values)
+        q_values = [(max_q - q) / (max_q - min_q) for q in q_values]
+        
+        # Map the scores back to the original raster shape
+        temp_raster_path = list(self.raster.values())[0]
+        with rasterio.open(temp_raster_path) as src:
+            edas_scores = np.full(src.shape, np.nan)
+            
+            # Only get values if the cell is in valid indices
+            edas_scores.ravel()[valid_indices] = q_values
+
+            with rasterio.open("edas_scores.tif", 'w', driver='GTiff',
+                            height=edas_scores.shape[0], width=edas_scores.shape[1],
+                            count=1, dtype=edas_scores.dtype,
+                            crs=src.crs, transform=src.transform) as dst:
+                dst.write(edas_scores, 1)
+
+            # Reclassify the scores into num_class
+            min_val = np.nanmin(edas_scores)
+            max_val = np.nanmax(edas_scores)
+            interval = (max_val - min_val) / num_class
+            reclassified_data = np.zeros(edas_scores.shape, dtype=np.uint8)
+            
+            # Calculate values for the separated classes
+            for i in range(num_class):
+                reclassified_data[(edas_scores >= (min_val + i * interval)) & 
+                                (edas_scores < (min_val + (i+1) * interval))] = i + 1
+
+            # Assign NaN values to class 0
+            reclassified_data[np.isnan(edas_scores)] = 0
+
+            # Save the reclassified raster
+            with rasterio.open('reclass_edas_scores.tif', 'w', driver='GTiff',
+                            height=reclassified_data.shape[0],
+                            width=reclassified_data.shape[1], 
+                            count=1, dtype=str(reclassified_data.dtype),
+                            crs=src.crs, transform=src.transform) as dst:
+                dst.write(reclassified_data, 1)
+                
+        return edas_scores, reclassified_data
+    
     def fedas(self, num_class = 5, delta = 0.1, fuzzy_decision_matrix=None):
         """
             Calculate the suitability score using Fuzzy EDAS with pyFDM TFN.
@@ -954,7 +1049,7 @@ class GisMcda:
                             count=1, dtype=fedas_scores.dtype,
                             crs=src.crs, transform=src.transform) as dst:
                 dst.write(fedas_scores, 1)
-                
+        
             # Reclassify the scores into num_class
             min_val = np.nanmin(fedas_scores)
             max_val = np.nanmax(fedas_scores)
@@ -970,92 +1065,11 @@ class GisMcda:
             reclassified_data[np.isnan(fedas_scores)] = 0
 
             # Save the reclassified raster
-            with rasterio.open('reclass_fuzzy_vikor_scores.tif', 'w', driver='GTiff',
+            with rasterio.open('reclass_fuzzy_edas_scores.tif', 'w', driver='GTiff',
                             height=reclassified_data.shape[0],
                             width=reclassified_data.shape[1], 
                             count=1, dtype=str(reclassified_data.dtype),
                             crs=src.crs, transform=src.transform) as dst:
                 dst.write(reclassified_data, 1)
-                    
+                          
         return fedas_scores, reclassified_data
-
-
-def correlation_matrix(reclass_dict):
-    """
-    Compute and plot the correlation coefficient matrix for reclassified suitability map.
-    """
-    
-    # Normalize each raster data in the dictionary
-    for key, data in reclass_dict.items():
-        valid_data = data[~np.isnan(data) and (data != 0) & (data != 1)]
-        reclass_raster_dict[key] = valid_data.flatten()
-    
-    # Convert the dictionary to a pandas DataFrame
-    df = pd.DataFrame(reclass_dict)
-    
-    # Compute the correlation matrix
-    correlation_matrix = df.corr()
-    
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(correlation_matrix, annot=True, cmap='cividis', vmin=-1, vmax=1)
-    plt.title("Correlation Matrix")
-    plt.show()
-    
-    return correlation_matrix
-
-
-# def reclass_common_plot(folder_path, base_layer=None, same_value=None):
-#     """
-#     Plot cells if the raster has the input value. Then clip and plot the base map.
-#     """
-    
-#     if not os.path.exists(folder_path):
-#         print("The provided folder path does not exist.")
-#         return
-    
-#     raster_files = [f for f in os.listdir(folder_path) if f.endswith('.tif')]
-
-#     # Process the base shapefile
-#     base_geom = None
-#     if base_layer:
-#         base_gdf = gpd.read_file(base_layer)
-#         base_geom = base_gdf.geometry.unary_union
-    
-#     # Initialize a matrix with ones
-#     with rasterio.open(os.path.join(folder_path, raster_files[0])) as src:
-#         common_cells = np.ones(src.shape, dtype=bool)
-#         raster_crs = src.crs
-    
-#     for raster_file in raster_files:
-#         with rasterio.open(os.path.join(folder_path, raster_file)) as src:
-#             data = src.read(1)
-#             # Update the common cells matrix
-#             if same_value:
-#                 value_mask = (data == same_value)
-#                 common_cells &= value_mask
-
-#     if not np.any(common_cells):
-#         print("There are no common cells with the value", same_value, "across all rasters.")
-#         return
-
-#     # Reproject the shapefile to match the raster's CRS if they are different
-#     if base_layer and base_gdf.crs != raster_crs:
-#         base_gdf = base_gdf.to_crs(raster_crs)
-
-#     # Plot the common cells
-#     fig, ax = plt.subplots(figsize=(10, 5))
-#     ax.imshow(common_cells, cmap='Blues', interpolation='none')
-    
-#     # Plot the base layer shapefile
-#     if base_layer:
-#         base_gdf.boundary.plot(ax=ax, color='black', linewidth=1)
-    
-#     ax.axis('off')
-#     plt.tight_layout()
-#     plt.show()
-    
-
-if __name__ == "__main__":
-    reclass_common_plot("reclass_suitability", 
-                            base_layer="hk_wind_turbine_site_selection_case_study/study_area/study_area_without_constraints.shp", 
-                            same_value=5)

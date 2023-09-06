@@ -3,11 +3,17 @@
 ## Description
 This repository contains a unified workflow application tailored for GIS-MCDA integrated site selection, focusing primarily on renewable energy applications. The toolkit streamlines the GIS-MCDA process, enhancing efficiency, consistency, and replicability. It's designed to be user-friendly, making the complex process of site selection accessible to both experts and novices in the field.
 
+## Features
+
+- **Geospatial Data Handling**: Comprehensive tools for transforming and processing geospatial data.
+- **Unified Workflow**: A holistic platform that merges the capabilities of GIS and MCDA, eliminating the need for multiple applications.
+- **Objective Decision Framework**: Minimising the reliance on subjective expert inputs by criteria weighting tools.
+
 ## Installation
 To run the tools, you will need to have Python installed on your computer. Additionally, you will need to install several Python packages. You can install the packages with the following command:
 
 ```python
-pip install numpy pandas geopandas matplotlib rasterio shapely scipy
+pip install numpy pandas geopandas matplotlib rasterio shapely scipy skcriteria pymcdm pydecision pyds
 ```
 
 ## Usage
@@ -16,5 +22,4 @@ To use these tools, you will need to provide geospatial data layers in the form 
 
 After running the tools, the output will be a set of raster files representing the suitability scores of different locations for renewable energy installation based on each MCDA method.
 
-
-To start using it, you'll need to install Python and some essential libraries. Please refer to the [Installation Guide](#) for detailed instructions. Once you have the prerequisites installed, you can download or clone this repository.
+To start using it, you'll need to install Python and some essential libraries. Once you have the prerequisites installed, you can download or clone this repository.
